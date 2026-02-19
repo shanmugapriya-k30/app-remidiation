@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+mysql-connector-python
+pandas
+python-multipart
+openpyxl
+pydantic
+python-dotenv
+pymupdf
+pytesseract 
+Pillow
+pdfplumber 
+PyPDF2
+pymysql
+aiofiles
+opencv-python
