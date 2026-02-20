@@ -212,6 +212,7 @@ def extract_key_values(text: str, expected_keys: list | None = None) -> dict:
 
     return result
 
+import re
 
 def extract_apm_from_text(text: str) -> dict:
     """
@@ -234,7 +235,7 @@ def extract_apm_from_text(text: str) -> dict:
     block = None
     if m:
         start = m.end()
-        # take next up to 30 lines or until two consecutive blank lines or another major heading
+        # take next lines until two consecutive blank lines or up to 200 collected lines
         lines = t[start:].splitlines()
         take = []
         blank_count = 0
@@ -278,8 +279,8 @@ def extract_apm_from_text(text: str) -> dict:
             low = ln.lower()
             for ek in expected_keys:
                 if ek.lower() in low:
-                    # collect this line plus the next 3 lines as context
-                    context = lines[i : i + 4]
+                    # collect this line plus the next N lines as context (increased from 3 -> 10)
+                    context = lines[i : i + 10 + 1]
                     candidates.extend(context)
         if candidates:
             block = "\n".join(candidates)
@@ -288,46 +289,72 @@ def extract_apm_from_text(text: str) -> dict:
     if not block:
         block = t
 
-    # Clean HTML artifacts if any (e.g., from copy/paste containing links)
+    # Clean HTML artifacts if any (e.g., from copy/paste containing links) - keep mailto:
     block = re.sub(r"https?://\S+", "", block)
 
     # Parse block into key/value pairs (give expected keys to help proper splitting)
     kv = extract_key_values(block, expected_keys=expected_keys)
 
-    # Post-process keys: normalize spacing and capitalization
+    # Post-process keys: normalize spacing and capitalization; also pipe->comma, collapse spaces
     cleaned = {}
     for k, v in kv.items():
         clean_k = re.sub(r"\s+", " ", k).strip()
-        cleaned[clean_k] = v.strip() if isinstance(v, str) else v
+        if isinstance(v, str):
+            val = v.replace("|", ",")
+            val = re.sub(r"\s+", " ", val).strip()
+        else:
+            val = v
+        cleaned[clean_k] = val
 
-    # If Application Owner value is missing or empty, try to find an email near the heading in the original block or full text
+    # Build final output that contains ONLY the expected keys (preserve order)
+    def normalize_key(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+
+    cleaned_norm_map = {normalize_key(k): k for k in cleaned.keys()}
+
+    final = {}
+    for key in expected_keys:
+        nk = normalize_key(key)
+        if nk in cleaned_norm_map:
+            final[key] = cleaned[cleaned_norm_map[nk]]
+        else:
+            final[key] = ""
+
+    def find_owner_email_in_block(blk: str, max_lines_after: int = 20) -> str:
+        """
+        Prefer the email that appears within 'max_lines_after' lines after the 'Application Owner' line.
+        If not found, return the first email found anywhere in the block.
+        Never search the entire document to avoid picking unrelated emails.
+        """
+        email_re = re.compile(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}")
+        lines = blk.splitlines()
+
+        # 1) Look near the 'Application Owner' line(s)
+        for i, ln in enumerate(lines):
+            if re.search(r"application\s*owner", ln, re.IGNORECASE):
+                # search within the window after the key line
+                window = "\n".join(lines[i : i + max_lines_after + 1])
+                m_email = email_re.search(window)
+                if m_email:
+                    return m_email.group(0)
+
+        # 2) Otherwise, take any email present within the block (still scoped)
+        m_any = email_re.search(blk)
+        if m_any:
+            return m_any.group(0)
+
+        return ""
+
+    # If Application Owner missing/empty, fill from block-scoped search ONLY
     ao_key = None
-    for k in cleaned.keys():
-        if k.lower().replace(" ", "") == "applicationowner":
+    for k in final.keys():
+        if normalize_key(k) == "applicationowner":
             ao_key = k
             break
 
-    if (not ao_key) or (ao_key and not cleaned.get(ao_key)):
-        # search in block first (block variable exists), then full text
-        search_space = block if 'block' in locals() and block else t
-        # find position of application owner in search_space
-        m = re.search(r"application\s*owner", search_space, re.IGNORECASE)
-        email = None
-        if m:
-            # search for email within the next 200 characters
-            sub = search_space[m.end(): m.end() + 400]
-            em = re.search(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", sub)
-            if em:
-                email = em.group(0)
+    if ao_key and not final.get(ao_key):
+        owner_email = find_owner_email_in_block(block)
+        if owner_email:
+            final[ao_key] = owner_email
 
-        # fallback: search entire text for any email
-        if not email:
-            em2 = re.search(r"[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}", t)
-            if em2:
-                email = em2.group(0)
-
-        if email:
-            key_name = ao_key if ao_key else "Application Owner"
-            cleaned[key_name] = email
-
-    return cleaned
+    return final

@@ -17,8 +17,7 @@ class FileOut(BaseModel):
     uploaded_at: datetime
 
     class Config:
-        # Pydantic v2 renamed `orm_mode` -> `from_attributes`.
-        # Use the v2 key so we avoid the runtime warning in environments using Pydantic v2.
+    
         from_attributes = True
 
 

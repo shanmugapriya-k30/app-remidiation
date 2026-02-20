@@ -61,11 +61,7 @@ async def upload(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
 @app.post("/extract-apm")
 async def extract_apm(file: UploadFile = File(...)):
-    """Upload a PDF/image and return extracted APM / Labels / Tagging fields.
-
-    This endpoint does not persist the file; it saves a temporary copy, extracts text,
-    runs the APM extractor, and returns the structured mapping.
-    """
+    #apm extractor 
     # Save uploaded file to temp path
     file_ext = os.path.splitext(file.filename)[1].lower()
     uid = str(uuid.uuid4())
